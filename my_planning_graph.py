@@ -309,8 +309,26 @@ class PlanningGraph():
         # for example, the A0 level will iterate through all possible actions for the problem and add a PgNode_a to a_levels[0]
         #   set iff all prerequisite literals for the action hold in S0.  This can be accomplished by testing
         #   to see if a proposed PgNode_a has prenodes that are a subset of the previous S level.  Once an
-        #   action node is added, it MUST be connected to the S node instances in the appropriate s_level set.
-
+        #   action node is added, it MUST be connected to the S node instances in the appropriate s_level set.z
+        
+        # This implementation has been done following the discussion in the 
+        # AIND Forum:
+        # https://discussions.udacity.com/t/problem-in-parent-child-set-association-in-add-action-level-and-add-literal-level/240345/23
+        # In particular, the action level is constructed selecting all the actions
+        # whose prenodes (the action preconditions) are a subset of the relative
+        # literal level (the set of the states that belong to that level of the graph).
+        
+        self.a_levels.append(set())
+        for action in self.all_actions:
+            a_node = PgNode_a(action)
+            if a_node.prenodes.issubset(self.s_levels[level]):
+                self.a_levels[level].add(a_node)
+                
+                # The action level MUST be connected to the S node instance
+                # in the appropriate s_level
+                a_node.parents = a_node.prenodes
+                a_node.children = a_node.effnodes
+     
     def add_literal_level(self, level):
         """ add an S (literal) level to the Planning Graph
 
@@ -328,7 +346,14 @@ class PlanningGraph():
         #   may be "added" to the set without fear of duplication.  However, it is important to then correctly create and connect
         #   all of the new S nodes as children of all the A nodes that could produce them, and likewise add the A nodes to the
         #   parent sets of the S nodes
-
+        
+        self.s_levels.append(set())
+        for action in self.a_levels[level - 1]:
+            for effect in action.effnodes:
+                state = PgNode_s(effect.symbol, effect.is_pos)
+                state.parents.add(action)
+                self.s_levels[level].add(state)
+                
     def update_a_mutex(self, nodeset):
         """ Determine and update sibling mutual exclusion for A-level nodes
 
@@ -385,7 +410,11 @@ class PlanningGraph():
         :param node_a2: PgNode_a
         :return: bool
         """
-        # TODO test for Inconsistent Effects between nodes
+        # TODO test for Inconsistent Effects between nodes 
+        for effect_1 in node_a1.effnodes:
+            for effect_2 in node_a2.effnodes:
+                if effect_1.symbol == effect_2.symbol and effect_1.is_pos != effect_2.is_pos:
+                    return True
         return False
 
     def interference_mutex(self, node_a1: PgNode_a, node_a2: PgNode_a) -> bool:
@@ -403,6 +432,16 @@ class PlanningGraph():
         :return: bool
         """
         # TODO test for Interference between nodes
+        for effect_1 in node_a1.effnodes:
+            for precond_2 in node_a2.prenodes:
+                if effect_1.symbol == precond_2.symbol and effect_1.is_pos != precond_2.is_pos:
+                    return True
+        
+        for precond_1 in node_a1.prenodes:
+            for effect_2 in node_a2.effnodes:
+                if precond_1.symbol == effect_2.symbol and precond_1.is_pos != effect_2.is_pos:
+                    return True
+        
         return False
 
     def competing_needs_mutex(self, node_a1: PgNode_a, node_a2: PgNode_a) -> bool:
@@ -417,6 +456,18 @@ class PlanningGraph():
         """
 
         # TODO test for Competing Needs between nodes
+        # This implementation has been done following the discussion in the AIND Forum:
+        # https://discussions.udacity.com/t/problem-with-test-competing-needs-mutex/227344
+        for parent_1 in node_a1.parents:
+            for parent_2 in node_a2.parents:
+                if parent_1.is_mutex(parent_2):
+                    return True
+
+        if len(node_a1.prenodes) > 0 and len(node_a2.prenodes) > 0:
+            for precond_1 in node_a1.prenodes:
+                for precond_2 in node_a2.prenodes:
+                    if precond_1.symbol == precond_2.symbol and precond_1.is_pos != precond_2.is_pos:
+                        return True
         return False
 
     def update_s_mutex(self, nodeset: set):
@@ -452,6 +503,8 @@ class PlanningGraph():
         :return: bool
         """
         # TODO test for negation between nodes
+        if node_s1.symbol == node_s2.symbol  and node_s1.is_pos != node_s2.is_pos:
+            return True
         return False
 
     def inconsistent_support_mutex(self, node_s1: PgNode_s, node_s2: PgNode_s):
@@ -471,6 +524,17 @@ class PlanningGraph():
         :return: bool
         """
         # TODO test for Inconsistent Support between nodes
+        
+        for parent in node_s1.parents:
+            if node_s1 in parent.children and node_s2 in parent.children:
+                return False
+        for parent in node_s2.parents:
+            if node_s1 in parent.children and node_s2 in parent.children:
+                return False
+        for parent_1 in node_s1.parents:
+            for parent_2 in node_s2.parents:
+                if parent_1.is_mutex(parent_2):
+                    return True
         return False
 
     def h_levelsum(self) -> int:
@@ -481,4 +545,13 @@ class PlanningGraph():
         level_sum = 0
         # TODO implement
         # for each goal in the problem, determine the level cost, then add them together
+        
+        goals = list(self.problem.goal)
+        for level in range(len(self.s_levels)):
+            for state in self.s_levels[level]:
+                if state.is_pos:
+                    for p in goals:
+                        if state.symbol == p:
+                            level_sum += level
+                            goals.remove(p)                   
         return level_sum
